@@ -70,7 +70,7 @@ Credential-like parameter names such as `password`, `token`, `access_token`, `ap
 
 ### Hostile characters and encoding
 
-The decoder is strict. It rejects malformed percent triplets, invalid UTF-8, invalid Unicode surrogates, NUL bytes, CRLF, C0 and C1 controls, bidirectional format controls, Unicode `Cf` format characters, U+2028, and U+2029. Repeated percent encoding is rejected by default.
+The decoder is strict. It decodes raw query text exactly once, rejects malformed percent triplets, invalid UTF-8, invalid Unicode surrogates, NUL bytes, CRLF, C0 and C1 controls, bidirectional format controls, Unicode `Cf` format characters, U+2028, and U+2029. Additional encoded layers are inspected for hidden attacks and rejected by default without flattening them into the output value. Raw `#` fragment delimiters are rejected; use `%23` when a number sign is query data.
 
 ## REST API pagination, sort, and fields
 
@@ -143,11 +143,11 @@ Setting `maxFindings` to zero is rejected. A zero cap would hide findings and fa
 | `auditPagination(params, policy)` | Pagination report | Only for invalid input types or invalid policies |
 | `auditSort(sort, allowedFields, policy)` | Sort report | For an invalid allowlist or policy |
 | `auditFields(fields, allowedFields, policy)` | Field projection report | For an invalid allowlist or policy |
-| `serializeQueryTree(tree)` | Canonical query string | No |
+| `serializeQueryTree(tree)` | Canonical query string | Yes, `QueryCageError` for an unrepresentable or unsafe tree |
 | `createPolicy(base, overrides)` | Deeply frozen merged policy | For invalid policy values |
 | `getPolicy(name)` | Deeply frozen preset | For an unknown preset |
 
-Supported input forms are raw query strings with or without one leading question mark, URLSearchParams-compatible objects, and plain record objects containing scalar values, scalar arrays, and plain nested objects.
+Supported input forms are raw query strings with or without one leading question mark, URLSearchParams-compatible objects, and plain record objects containing scalar values, scalar arrays, and plain nested objects. URLSearchParams-compatible entries are already decoded and are never decoded a second time. Record input must be a finite tree of data properties: accessors, shared references, cycles, empty nested objects, empty arrays, sparse arrays, and unsupported scalar values are rejected instead of being invoked or silently dropped. `serializeQueryTree` validates the same representable query-tree domain and fails closed for empty keys, bracket-bearing keys, control text, shared or cyclic references, sparse arrays, nested arrays, non-string scalars, and excessive depth.
 
 ## CLI
 

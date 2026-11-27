@@ -18,6 +18,7 @@ export const QUERYCAGE_ERROR_CODES: {
   readonly NESTING_NOT_ALLOWED: 'QUERYCAGE_NESTING_NOT_ALLOWED';
   readonly MALFORMED_KEY: 'QUERYCAGE_MALFORMED_KEY';
   readonly INVALID_ENCODING: 'QUERYCAGE_INVALID_ENCODING';
+  readonly FRAGMENT_IN_QUERY: 'QUERYCAGE_FRAGMENT_IN_QUERY';
   readonly DOUBLE_ENCODING: 'QUERYCAGE_DOUBLE_ENCODING';
   readonly CONTROL_CHARACTER: 'QUERYCAGE_CONTROL_CHARACTER';
   readonly SEMICOLON_DELIMITER: 'QUERYCAGE_SEMICOLON_DELIMITER';
@@ -221,7 +222,7 @@ export const QUERYCAGE_POLICIES: {
 };
 
 export function getPolicy(name: QueryPolicyPresetName): ResolvedQueryPolicy;
-export function createPolicy(base?: QueryPolicyPresetName | QueryPolicy | ResolvedQueryPolicy, overrides?: QueryPolicy): ResolvedQueryPolicy;
+export function createPolicy(base?: QueryPolicyPresetName | ResolvedQueryPolicy, overrides?: QueryPolicy): ResolvedQueryPolicy;
 export function parseQuery(input: QueryInput, policy?: QueryPolicyInput): QueryOutputObject;
 export function auditQuery(input: QueryInput, policy?: QueryPolicyInput): QueryAuditReport;
 export function validateQuery(input: QueryInput, policy?: QueryPolicyInput): QueryValidationResult;

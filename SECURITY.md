@@ -13,13 +13,15 @@ Do not open a public issue for a vulnerability that can plausibly be exploited. 
 ## Hardening commitments
 
 - No runtime dependencies.
-- Deterministic linear parsing.
+- Deterministic linear parsing with bounded iterative record traversal.
 - Null-prototype object output.
+- Raw query text decoded exactly once, with repeated encoding inspected but never flattened.
 - Deeply frozen policies and reports.
 - No attacker-controlled values in findings or errors.
 - Secret values redacted from CLI output.
 - Fail-closed policy validation.
 - Generated CommonJS checked for byte parity in CI.
+- Canonical serialization validates representable trees and rejects cycles, accessors, empty containers, control text, and ambiguous keys.
 - TypeScript declaration checks on Linux and Windows.
 
 ## Supported versions

@@ -8,11 +8,15 @@ function nullObject() {
 
 function isPlainRecord(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
+  try {
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  } catch {
+    return false;
+  }
 }
 
-function utf8ByteLength(value) {
+function utf8ByteLengthAtMost(value, limit) {
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -35,8 +39,13 @@ function utf8ByteLength(value) {
     } else {
       bytes += 3;
     }
+    if (bytes > limit) return limit + 1;
   }
   return bytes;
+}
+
+function utf8ByteLength(value) {
+  return utf8ByteLengthAtMost(value, Number.MAX_SAFE_INTEGER);
 }
 
 function hasInvalidSurrogates(value) {
@@ -126,22 +135,31 @@ function hasPercentTriplet(value) {
 }
 
 function decodeComponentRepeated(encoded, plusAsSpace) {
-  let value = encoded;
-  let layers = 0;
-  let first = true;
-  while (layers < MAX_DECODE_LAYERS) {
+  let value;
+  try {
+    value = decodeComponentOnce(encoded, plusAsSpace);
+  } catch {
+    return { ok: false, value: '', securityValue: '', layers: 0, exhausted: false };
+  }
+  let securityValue = value;
+  let layers = 1;
+  while (layers < MAX_DECODE_LAYERS && hasPercentTriplet(securityValue)) {
     let decoded;
     try {
-      decoded = decodeComponentOnce(value, first && plusAsSpace);
+      decoded = decodeComponentOnce(securityValue, false);
     } catch {
-      return { ok: false, value: '', layers, exhausted: false };
+      break;
     }
+    securityValue = decoded;
     layers += 1;
-    value = decoded;
-    first = false;
-    if (!hasPercentTriplet(value)) return { ok: true, value, layers, exhausted: false };
   }
-  return { ok: true, value, layers, exhausted: hasPercentTriplet(value) };
+  return {
+    ok: true,
+    value,
+    securityValue,
+    layers,
+    exhausted: layers === MAX_DECODE_LAYERS && hasPercentTriplet(securityValue)
+  };
 }
 
 function isForbiddenControlCodePoint(codePoint) {
@@ -219,7 +237,7 @@ function encodeRFC3986(value) {
   });
 }
 
-function neutralizeTerminal(value) {
+function neutralizeTerminalCore(value, preserveLineBreaks) {
   let output = '';
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -233,7 +251,8 @@ function neutralizeTerminal(value) {
       }
     }
     const loneSurrogate = (code >= 0xd800 && code <= 0xdbff && width === 1) || (code >= 0xdc00 && code <= 0xdfff);
-    if (loneSurrogate || (isForbiddenControlCodePoint(codePoint) && codePoint !== 0x0a)) {
+    const allowedLineBreak = preserveLineBreaks && codePoint === 0x0a;
+    if (loneSurrogate || (isForbiddenControlCodePoint(codePoint) && !allowedLineBreak)) {
       output += '\ufffd';
     } else {
       output += value.slice(index, index + width);
@@ -241,6 +260,14 @@ function neutralizeTerminal(value) {
     index += width - 1;
   }
   return output;
+}
+
+function neutralizeTerminal(value) {
+  return neutralizeTerminalCore(value, false);
+}
+
+function neutralizeTerminalMultiline(value) {
+  return neutralizeTerminalCore(value, true);
 }
 
 function copyStringArray(values, fallback) {
@@ -267,6 +294,7 @@ export {
   nullObject,
   isPlainRecord,
   utf8ByteLength,
+  utf8ByteLengthAtMost,
   hasInvalidUnicode,
   decodeComponentRepeated,
   firstForbiddenControl,
@@ -278,6 +306,7 @@ export {
   compareStrings,
   encodeRFC3986,
   neutralizeTerminal,
+  neutralizeTerminalMultiline,
   copyStringArray,
   clampedJson
 };

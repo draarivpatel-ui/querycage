@@ -1,6 +1,6 @@
 import { QueryCageError, CODE } from './errors.mjs';
 import { resolvePolicy } from './policy.mjs';
-import { deepFreezeCopy, firstForbiddenControl, utf8ByteLength } from './utils.mjs';
+import { deepFreezeCopy, firstForbiddenControl, utf8ByteLength, utf8ByteLengthAtMost } from './utils.mjs';
 
 function validateAllowlist(allowedFields, policy, kind) {
   if (!Array.isArray(allowedFields)) {
@@ -87,7 +87,7 @@ function auditSort(sortParam, allowedFields, policyInput) {
     addFinding(findings, policy, CODE.INVALID_SORT, 'sort parameter must be a single string', 'sort');
     return finishReport(findings, policy, { sort: normalized, canonical: '' });
   }
-  if (sortParam.length === 0 || utf8ByteLength(sortParam) > policy.maxValueLength || firstForbiddenControl(sortParam) !== null) {
+  if (sortParam.length === 0 || utf8ByteLengthAtMost(sortParam, policy.maxValueLength) > policy.maxValueLength || firstForbiddenControl(sortParam) !== null) {
     addFinding(findings, policy, CODE.INVALID_SORT, 'sort parameter must be non empty, bounded, and clean', 'sort');
     return finishReport(findings, policy, { sort: normalized, canonical: '' });
   }
@@ -127,7 +127,7 @@ function auditFields(fieldsParam, allowedFields, policyInput) {
     addFinding(findings, policy, CODE.INVALID_FIELD, 'fields parameter must be a single string', 'fields');
     return finishReport(findings, policy, { fields: normalized, canonical: '' });
   }
-  if (fieldsParam.length === 0 || utf8ByteLength(fieldsParam) > policy.maxValueLength || firstForbiddenControl(fieldsParam) !== null) {
+  if (fieldsParam.length === 0 || utf8ByteLengthAtMost(fieldsParam, policy.maxValueLength) > policy.maxValueLength || firstForbiddenControl(fieldsParam) !== null) {
     addFinding(findings, policy, CODE.INVALID_FIELD, 'fields parameter must be non empty, bounded, and clean', 'fields');
     return finishReport(findings, policy, { fields: normalized, canonical: '' });
   }

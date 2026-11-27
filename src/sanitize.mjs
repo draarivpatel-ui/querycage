@@ -1,5 +1,5 @@
 import { resolvePolicy } from './policy.mjs';
-import { analyzeQuery } from './parser.mjs';
+import { INTERNAL_PARAM, analyzeQuery } from './parser.mjs';
 import { serializeQueryTree, cloneQueryTree } from './serializer.mjs';
 import { compareStrings, deepFreezeCopy, neutralizeTerminal, nullObject } from './utils.mjs';
 
@@ -16,11 +16,16 @@ function rootForParam(param, policy) {
   return param.slice(0, end);
 }
 
+function internalFindingParam(finding) {
+  return typeof finding[INTERNAL_PARAM] === 'string' ? finding[INTERNAL_PARAM] : finding.param;
+}
+
 function removeImplicatedRoots(tree, findings, policy) {
   let removed = false;
   for (const finding of findings) {
-    if (finding.severity !== 'error' || typeof finding.param !== 'string') continue;
-    const root = rootForParam(finding.param, policy);
+    const param = internalFindingParam(finding);
+    if (finding.severity !== 'error' || typeof param !== 'string') continue;
+    const root = rootForParam(param, policy);
     if (root.length > 0 && Object.prototype.hasOwnProperty.call(tree, root)) {
       delete tree[root];
       removed = true;
@@ -33,8 +38,9 @@ function collectImplicatedParams(analysis, policy) {
   const names = new Set();
   for (const key of Object.keys(analysis.tree)) names.add(key);
   for (const finding of analysis.findings) {
-    if (typeof finding.param !== 'string') continue;
-    const root = rootForParam(finding.param, policy);
+    const param = internalFindingParam(finding);
+    if (typeof param !== 'string') continue;
+    const root = rootForParam(param, policy);
     if (root.length > 0) names.add(root);
   }
   return names;

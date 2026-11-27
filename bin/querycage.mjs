@@ -11,6 +11,7 @@ import {
   serializeQueryTree,
   neutralizeTerminal
 } from '../src/index.mjs';
+import { neutralizeTerminalMultiline } from '../src/utils.mjs';
 
 const STDIN_LIMIT = 1024 * 1024;
 const SECRET_NAMES = new Set([
@@ -44,11 +45,17 @@ function redactTree(value) {
 }
 
 function writeStdout(text) {
-  process.stdout.write(neutralizeTerminal(text) + '\n');
+  process.stdout.write(neutralizeTerminalMultiline(text) + '\n');
 }
 
 function writeStderr(text) {
-  process.stderr.write(neutralizeTerminal(text) + '\n');
+  process.stderr.write(neutralizeTerminalMultiline(text) + '\n');
+}
+
+function formatError(error) {
+  const param = typeof error.param === 'string' ? ' ' + neutralizeTerminal(error.param) : '';
+  const detail = typeof error.detail === 'string' ? neutralizeTerminal(error.detail) : error.code;
+  return error.code + param + ': ' + detail;
 }
 
 function usage() {
@@ -155,7 +162,7 @@ async function main() {
       parsed = parseQuery(input, options.policy);
     } catch (error) {
       if (error instanceof QueryCageError && error.code !== CODE.INVALID_POLICY && error.code !== CODE.UNKNOWN_POLICY) {
-        writeStderr(error.code + (error.param ? ' ' + error.param : '') + ': ' + error.detail);
+        writeStderr(formatError(error));
         return 1;
       }
       throw error;
@@ -207,7 +214,7 @@ main().then((status) => {
   process.exitCode = status;
 }).catch((error) => {
   if (error instanceof QueryCageError) {
-    writeStderr(error.code + (error.param ? ' ' + error.param : '') + ': ' + error.detail);
+    writeStderr(formatError(error));
   } else {
     writeStderr('QUERYCAGE_INVALID_CLI_ARGUMENT: unexpected CLI failure');
   }

@@ -226,10 +226,10 @@ for (const [query, expected] of collisionCases) {
   });
 }
 
-test('double encoded normalized key collision is blocked twice', () => {
+test('double encoded normalized key input is blocked without flattening keys', () => {
   const report = auditQuery('id=1&%2569d=2', 'strict');
   assertHasCode(report, CODE.DOUBLE_ENCODING);
-  assertHasCode(report, CODE.KEY_COLLISION);
+  assertNoCode(report, CODE.KEY_COLLISION);
 });
 
 test('key collision check can be downgraded only by explicit policy', () => {

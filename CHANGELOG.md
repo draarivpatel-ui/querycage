@@ -4,7 +4,7 @@
 
 Initial local release candidate.
 
-- Strict zero-dependency query-string parser and auditor.
+- Strict zero-dependency query-string parser and auditor with adversarial red-team hardening.
 - HTTP Parameter Pollution defenses and configurable duplicate policies.
 - Prototype pollution firewall with null-prototype output.
 - NoSQL operator and secret-in-query detection.

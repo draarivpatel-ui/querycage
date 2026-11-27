@@ -19,6 +19,7 @@ const QUERYCAGE_ERROR_CODES = Object.freeze({
   NESTING_NOT_ALLOWED: 'QUERYCAGE_NESTING_NOT_ALLOWED',
   MALFORMED_KEY: 'QUERYCAGE_MALFORMED_KEY',
   INVALID_ENCODING: 'QUERYCAGE_INVALID_ENCODING',
+  FRAGMENT_IN_QUERY: 'QUERYCAGE_FRAGMENT_IN_QUERY',
   DOUBLE_ENCODING: 'QUERYCAGE_DOUBLE_ENCODING',
   CONTROL_CHARACTER: 'QUERYCAGE_CONTROL_CHARACTER',
   SEMICOLON_DELIMITER: 'QUERYCAGE_SEMICOLON_DELIMITER',
@@ -70,11 +71,15 @@ function nullObject() {
 
 function isPlainRecord(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
+  try {
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  } catch {
+    return false;
+  }
 }
 
-function utf8ByteLength(value) {
+function utf8ByteLengthAtMost(value, limit) {
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -97,8 +102,13 @@ function utf8ByteLength(value) {
     } else {
       bytes += 3;
     }
+    if (bytes > limit) return limit + 1;
   }
   return bytes;
+}
+
+function utf8ByteLength(value) {
+  return utf8ByteLengthAtMost(value, Number.MAX_SAFE_INTEGER);
 }
 
 function hasInvalidSurrogates(value) {
@@ -188,22 +198,31 @@ function hasPercentTriplet(value) {
 }
 
 function decodeComponentRepeated(encoded, plusAsSpace) {
-  let value = encoded;
-  let layers = 0;
-  let first = true;
-  while (layers < MAX_DECODE_LAYERS) {
+  let value;
+  try {
+    value = decodeComponentOnce(encoded, plusAsSpace);
+  } catch {
+    return { ok: false, value: '', securityValue: '', layers: 0, exhausted: false };
+  }
+  let securityValue = value;
+  let layers = 1;
+  while (layers < MAX_DECODE_LAYERS && hasPercentTriplet(securityValue)) {
     let decoded;
     try {
-      decoded = decodeComponentOnce(value, first && plusAsSpace);
+      decoded = decodeComponentOnce(securityValue, false);
     } catch {
-      return { ok: false, value: '', layers, exhausted: false };
+      break;
     }
+    securityValue = decoded;
     layers += 1;
-    value = decoded;
-    first = false;
-    if (!hasPercentTriplet(value)) return { ok: true, value, layers, exhausted: false };
   }
-  return { ok: true, value, layers, exhausted: hasPercentTriplet(value) };
+  return {
+    ok: true,
+    value,
+    securityValue,
+    layers,
+    exhausted: layers === MAX_DECODE_LAYERS && hasPercentTriplet(securityValue)
+  };
 }
 
 function isForbiddenControlCodePoint(codePoint) {
@@ -281,7 +300,7 @@ function encodeRFC3986(value) {
   });
 }
 
-function neutralizeTerminal(value) {
+function neutralizeTerminalCore(value, preserveLineBreaks) {
   let output = '';
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -295,7 +314,8 @@ function neutralizeTerminal(value) {
       }
     }
     const loneSurrogate = (code >= 0xd800 && code <= 0xdbff && width === 1) || (code >= 0xdc00 && code <= 0xdfff);
-    if (loneSurrogate || (isForbiddenControlCodePoint(codePoint) && codePoint !== 0x0a)) {
+    const allowedLineBreak = preserveLineBreaks && codePoint === 0x0a;
+    if (loneSurrogate || (isForbiddenControlCodePoint(codePoint) && !allowedLineBreak)) {
       output += '\ufffd';
     } else {
       output += value.slice(index, index + width);
@@ -303,6 +323,14 @@ function neutralizeTerminal(value) {
     index += width - 1;
   }
   return output;
+}
+
+function neutralizeTerminal(value) {
+  return neutralizeTerminalCore(value, false);
+}
+
+function neutralizeTerminalMultiline(value) {
+  return neutralizeTerminalCore(value, true);
 }
 
 function copyStringArray(values, fallback) {
@@ -328,6 +356,7 @@ __exports["MAX_DECODE_LAYERS"] = MAX_DECODE_LAYERS;
 __exports["nullObject"] = nullObject;
 __exports["isPlainRecord"] = isPlainRecord;
 __exports["utf8ByteLength"] = utf8ByteLength;
+__exports["utf8ByteLengthAtMost"] = utf8ByteLengthAtMost;
 __exports["hasInvalidUnicode"] = hasInvalidUnicode;
 __exports["decodeComponentRepeated"] = decodeComponentRepeated;
 __exports["firstForbiddenControl"] = firstForbiddenControl;
@@ -339,6 +368,7 @@ __exports["freezeTree"] = freezeTree;
 __exports["compareStrings"] = compareStrings;
 __exports["encodeRFC3986"] = encodeRFC3986;
 __exports["neutralizeTerminal"] = neutralizeTerminal;
+__exports["neutralizeTerminalMultiline"] = neutralizeTerminalMultiline;
 __exports["copyStringArray"] = copyStringArray;
 __exports["clampedJson"] = clampedJson;
 return __exports;
@@ -616,7 +646,7 @@ return __exports;
 const __querycageModule3 = (() => {
 const { QueryCageError, CODE } = __querycageModule0;
 const { resolvePolicy } = __querycageModule2;
-const { deepFreezeCopy, firstForbiddenControl, utf8ByteLength } = __querycageModule1;
+const { deepFreezeCopy, firstForbiddenControl, utf8ByteLength, utf8ByteLengthAtMost } = __querycageModule1;
 function validateAllowlist(allowedFields, policy, kind) {
   if (!Array.isArray(allowedFields)) {
     throw new QueryCageError(CODE.INVALID_POLICY, kind + ' allowedFields must be an array of field names', 'allowedFields');
@@ -702,7 +732,7 @@ function auditSort(sortParam, allowedFields, policyInput) {
     addFinding(findings, policy, CODE.INVALID_SORT, 'sort parameter must be a single string', 'sort');
     return finishReport(findings, policy, { sort: normalized, canonical: '' });
   }
-  if (sortParam.length === 0 || utf8ByteLength(sortParam) > policy.maxValueLength || firstForbiddenControl(sortParam) !== null) {
+  if (sortParam.length === 0 || utf8ByteLengthAtMost(sortParam, policy.maxValueLength) > policy.maxValueLength || firstForbiddenControl(sortParam) !== null) {
     addFinding(findings, policy, CODE.INVALID_SORT, 'sort parameter must be non empty, bounded, and clean', 'sort');
     return finishReport(findings, policy, { sort: normalized, canonical: '' });
   }
@@ -742,7 +772,7 @@ function auditFields(fieldsParam, allowedFields, policyInput) {
     addFinding(findings, policy, CODE.INVALID_FIELD, 'fields parameter must be a single string', 'fields');
     return finishReport(findings, policy, { fields: normalized, canonical: '' });
   }
-  if (fieldsParam.length === 0 || utf8ByteLength(fieldsParam) > policy.maxValueLength || firstForbiddenControl(fieldsParam) !== null) {
+  if (fieldsParam.length === 0 || utf8ByteLengthAtMost(fieldsParam, policy.maxValueLength) > policy.maxValueLength || firstForbiddenControl(fieldsParam) !== null) {
     addFinding(findings, policy, CODE.INVALID_FIELD, 'fields parameter must be non empty, bounded, and clean', 'fields');
     return finishReport(findings, policy, { fields: normalized, canonical: '' });
   }
@@ -795,7 +825,7 @@ return __exports;
 const __querycageModule5 = (() => {
 const { QueryCageError, CODE } = __querycageModule0;
 const { resolvePolicy } = __querycageModule2;
-const { nullObject, isPlainRecord, utf8ByteLength, hasInvalidUnicode, decodeComponentRepeated, firstForbiddenControl, normalizeSecurityName, normalizeSecretName, deepFreezeCopy, freezeTree, neutralizeTerminal } = __querycageModule1;
+const { nullObject, isPlainRecord, utf8ByteLengthAtMost, hasInvalidUnicode, decodeComponentRepeated, firstForbiddenControl, normalizeSecurityName, normalizeSecretName, deepFreezeCopy, freezeTree, neutralizeTerminal } = __querycageModule1;
 const FORBIDDEN_KEY_SEGMENTS = new Set([
   '__proto__',
   'constructor',
@@ -825,6 +855,8 @@ const SECRET_KEY_SEGMENTS = new Set([
   'privatekey'
 ]);
 
+const INTERNAL_PARAM = Symbol('querycageInternalParam');
+
 function safeParam(value) {
   if (typeof value !== 'string') return undefined;
   return Array.from(neutralizeTerminal(value)).slice(0, 160).join('');
@@ -839,6 +871,14 @@ function addFinding(state, code, severity, message, param, index) {
   const cleanParam = safeParam(param);
   if (cleanParam !== undefined) finding.param = cleanParam;
   if (Number.isSafeInteger(index)) finding.index = index;
+  if (typeof param === 'string') {
+    Object.defineProperty(finding, INTERNAL_PARAM, {
+      value: param,
+      enumerable: false,
+      configurable: false,
+      writable: false
+    });
+  }
   state.findings.push(finding);
 }
 
@@ -897,6 +937,31 @@ function splitDotSegment(segment, output, state, param, index) {
     }
   }
   return true;
+}
+
+function hasMalformedDotPath(value) {
+  return value[0] === '.' || value[value.length - 1] === '.' || value.indexOf('..') !== -1;
+}
+
+function scanForbiddenSegments(segments, state, param, index) {
+  let blocked = false;
+  for (const segment of segments) {
+    if (segment.type !== 'key') continue;
+    const securityName = normalizeSecurityName(segment.value);
+    if (FORBIDDEN_KEY_SEGMENTS.has(securityName)) {
+      errorFinding(state, CODE.PROTOTYPE_POLLUTION, 'forbidden object prototype key segment detected', param, index);
+      blocked = true;
+    }
+    if (securityName[0] === '$' && state.policy.rejectNoSqlOperators) {
+      errorFinding(state, CODE.NOSQL_OPERATOR, 'dollar prefixed query operator key segment detected', param, index);
+      blocked = true;
+    }
+    if (SECRET_KEY_SEGMENTS.has(normalizeSecretName(segment.value)) && state.policy.rejectSecrets) {
+      errorFinding(state, CODE.SECRET_IN_QUERY, 'sensitive credential parameter detected and its value was redacted', param, index);
+      blocked = true;
+    }
+  }
+  return blocked;
 }
 
 function parseIndexSegment(content, state, param, index) {
@@ -975,6 +1040,10 @@ function parseKeyPath(key, state, param, index) {
   const segments = [];
   for (const raw of rawSegments) {
     if (raw.kind === 'key') {
+      if (hasMalformedDotPath(raw.value)) {
+        errorFinding(state, CODE.MALFORMED_KEY, 'dot notation contains an empty path segment', param, index);
+        return null;
+      }
       if (state.policy.allowDotNotation) {
         if (!splitDotSegment(raw.value, segments, state, param, index)) return null;
       } else {
@@ -984,6 +1053,7 @@ function parseKeyPath(key, state, param, index) {
       segments.push({ type: raw.kind, value: raw.value, numeric: raw.numeric });
     }
   }
+  if (scanForbiddenSegments(segments, state, param, index)) return null;
   for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
     const segment = segments[segmentIndex];
     if ((segment.type === 'append' || segment.type === 'index') && segmentIndex !== segments.length - 1) {
@@ -1032,22 +1102,6 @@ function inspectSegments(entry, parsed, state) {
     errorFinding(state, CODE.ARRAY_NOT_ALLOWED, 'array parameter is outside the configured allowlist', entry.key, entry.ordinal);
     stopped = true;
   }
-  for (const segment of segments) {
-    if (segment.type !== 'key') continue;
-    const securityName = normalizeSecurityName(segment.value);
-    if (FORBIDDEN_KEY_SEGMENTS.has(securityName)) {
-      errorFinding(state, CODE.PROTOTYPE_POLLUTION, 'forbidden object prototype key segment detected', entry.key, entry.ordinal);
-      stopped = true;
-    }
-    if (securityName[0] === '$' && state.policy.rejectNoSqlOperators) {
-      errorFinding(state, CODE.NOSQL_OPERATOR, 'dollar prefixed query operator key segment detected', entry.key, entry.ordinal);
-      stopped = true;
-    }
-    if (SECRET_KEY_SEGMENTS.has(normalizeSecretName(segment.value)) && state.policy.rejectSecrets) {
-      errorFinding(state, CODE.SECRET_IN_QUERY, 'sensitive credential parameter detected and its value was redacted', entry.key, entry.ordinal);
-      stopped = true;
-    }
-  }
   return !stopped;
 }
 
@@ -1066,11 +1120,11 @@ function validateDecodedText(entry, state) {
     errorFinding(state, CODE.CONTROL_CHARACTER, 'parameter value contains a control or format character', entry.key, entry.ordinal);
     return false;
   }
-  if (utf8ByteLength(entry.key) > state.policy.maxKeyLength) {
+  if (utf8ByteLengthAtMost(entry.key, state.policy.maxKeyLength) > state.policy.maxKeyLength) {
     errorFinding(state, CODE.KEY_TOO_LONG, 'parameter key exceeds the configured byte length', entry.key, entry.ordinal);
     return false;
   }
-  if (utf8ByteLength(entry.value) > state.policy.maxValueLength) {
+  if (utf8ByteLengthAtMost(entry.value, state.policy.maxValueLength) > state.policy.maxValueLength) {
     errorFinding(state, CODE.VALUE_TOO_LONG, 'parameter value exceeds the configured byte length', entry.key, entry.ordinal);
     return false;
   }
@@ -1090,15 +1144,53 @@ function decodeRawEntry(entry, state) {
   }
   entry.key = decodedKey.value;
   entry.value = decodedValue.value;
+  entry.securityKey = decodedKey.securityValue;
+  entry.securityValue = decodedValue.securityValue;
   if ((decodedKey.layers > 1 || decodedValue.layers > 1 || decodedKey.exhausted || decodedValue.exhausted) && state.policy.rejectDoubleEncoding) {
     errorFinding(state, CODE.DOUBLE_ENCODING, 'multiple layers of percent encoding are not allowed', entry.key, entry.ordinal);
   }
   return true;
 }
 
+function hiddenEncodedKeyParts(value) {
+  const parts = [];
+  let current = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === '[' || char === ']' || char === '.') {
+      if (current.length > 0) parts.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  if (current.length > 0) parts.push(current);
+  return parts;
+}
+
+function inspectHiddenEncodedKey(entry, state) {
+  if (typeof entry.securityKey !== 'string' || entry.securityKey === entry.key) return true;
+  const parts = hiddenEncodedKeyParts(entry.securityKey);
+  const segments = parts.map((part) => ({ type: 'key', value: part }));
+  return !scanForbiddenSegments(segments, state, entry.key, entry.ordinal);
+}
+
 function prepareEntry(entry, state) {
-  if (!entry.direct && !decodeRawEntry(entry, state)) return null;
+  if (!entry.direct) {
+    if (entry.predecoded === true) {
+      entry.key = entry.rawKey;
+      entry.value = entry.rawValue;
+      entry.securityKey = entry.rawKey;
+      entry.securityValue = entry.rawValue;
+    } else if (!decodeRawEntry(entry, state)) {
+      return null;
+    }
+  }
   if (!validateDecodedText(entry, state)) return null;
+  if (entry.hasFragment === true) {
+    errorFinding(state, CODE.FRAGMENT_IN_QUERY, 'raw fragment delimiters are outside the safe query input subset', entry.key, entry.ordinal);
+  }
+  if (!inspectHiddenEncodedKey(entry, state)) return null;
   const parsed = parseKeyPath(entry.key, state, entry.key, entry.ordinal);
   if (parsed === null) return null;
   entry.path = parsed.segments;
@@ -1113,11 +1205,12 @@ function prepareEntry(entry, state) {
 function consumeRawString(input, state) {
   let source = input;
   if (source[0] === '?') source = source.slice(1);
-  state.bytes = utf8ByteLength(source);
+  state.bytes = utf8ByteLengthAtMost(source, state.policy.maxBytes);
+  const entries = [];
   if (state.bytes > state.policy.maxBytes) {
     errorFinding(state, CODE.QUERY_TOO_LARGE, 'query byte length exceeds the configured maximum');
+    return entries;
   }
-  const entries = [];
   let position = 0;
   let ordinal = 0;
   while (position <= source.length) {
@@ -1142,7 +1235,7 @@ function consumeRawString(input, state) {
     if (state.policy.rejectSemicolons && hasSemicolon) {
       errorFinding(state, CODE.SEMICOLON_DELIMITER, 'semicolon delimiters create parser differential risk', rawKey, ordinal);
     }
-    entries.push({ ordinal, rawKey, rawValue, direct: false, originalKey: rawKey, hasSemicolon });
+    entries.push({ ordinal, rawKey, rawValue, direct: false, originalKey: rawKey, hasSemicolon, hasFragment: segment.indexOf('#') !== -1 });
     if (amp === -1) break;
   }
   return entries;
@@ -1152,6 +1245,13 @@ function consumeSearchParams(input, state) {
   const entries = [];
   let ordinal = 0;
   let bytes = 0;
+  let oversized = false;
+  const measure = (value) => {
+    const remaining = state.policy.maxBytes + 1 - bytes;
+    const size = utf8ByteLengthAtMost(value, Math.max(0, remaining));
+    bytes += size;
+    if (bytes > state.policy.maxBytes) oversized = true;
+  };
   for (const pair of input.entries()) {
     ordinal += 1;
     state.params = ordinal;
@@ -1161,13 +1261,20 @@ function consumeSearchParams(input, state) {
     }
     const rawKey = String(pair[0]);
     const rawValue = String(pair[1]);
-    bytes += utf8ByteLength(rawKey) + utf8ByteLength(rawValue) + 1;
-    entries.push({ ordinal, rawKey, rawValue, direct: false, originalKey: rawKey });
+    measure(rawKey);
+    if (!oversized) {
+      bytes += 1;
+      if (bytes > state.policy.maxBytes) oversized = true;
+    }
+    if (!oversized) measure(rawValue);
+    if (oversized) {
+      errorFinding(state, CODE.QUERY_TOO_LARGE, 'query byte length exceeds the configured maximum');
+      state.bytes = state.policy.maxBytes + 1;
+      return entries;
+    }
+    entries.push({ ordinal, rawKey, rawValue, direct: false, predecoded: true, originalKey: rawKey });
   }
   state.bytes = bytes;
-  if (bytes > state.policy.maxBytes) {
-    errorFinding(state, CODE.QUERY_TOO_LARGE, 'query byte length exceeds the configured maximum');
-  }
   return entries;
 }
 
@@ -1201,24 +1308,91 @@ function displayObjectPath(parts) {
   return output;
 }
 
-function collectObjectEntries(value, pathParts, state, entries, activeObjects) {
+function readDataProperty(object, key) {
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(object, key);
+  } catch {
+    return { ok: false, value: undefined };
+  }
+  if (descriptor === undefined || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+    return { ok: false, value: undefined };
+  }
+  return { ok: true, value: descriptor.value };
+}
+
+function collectObjectEntries(value, pathParts, state, entries) {
   if (!isPlainRecord(value)) {
     errorFinding(state, CODE.INVALID_INPUT, 'record input must contain only plain objects, arrays, and scalar values');
     return;
   }
-  if (activeObjects.has(value)) {
-    errorFinding(state, CODE.INVALID_INPUT, 'record input must not contain cyclic object references');
-    return;
-  }
-  activeObjects.add(value);
-  for (const key of Object.keys(value)) {
-    const child = value[key];
-    const childPath = pathParts.concat([key]);
+  const seenObjects = new Set();
+  const stack = [];
+  let stopped = false;
+  const enterObject = (object, objectPath) => {
+    const objectLabel = objectPath.length > 0 ? displayObjectPath(objectPath) : undefined;
+    if (!isPlainRecord(object)) {
+      errorFinding(state, CODE.INVALID_INPUT, 'record input must contain only plain objects, arrays, and scalar values', objectLabel);
+      return false;
+    }
+    if (seenObjects.has(object)) {
+      errorFinding(state, CODE.INVALID_INPUT, 'record input must be a tree without shared or cyclic object references', objectLabel);
+      return false;
+    }
+    seenObjects.add(object);
+    if (objectPath.length > state.policy.maxDepth) {
+      errorFinding(state, CODE.NESTING_TOO_DEEP, 'record input nesting exceeds the configured maximum depth', objectLabel);
+      return false;
+    }
+    let keys;
+    try {
+      keys = Object.keys(object);
+    } catch {
+      errorFinding(state, CODE.INVALID_INPUT, 'record input keys must be enumerable without throwing', objectLabel);
+      return false;
+    }
+    if (objectPath.length > 0 && keys.length === 0) {
+      errorFinding(state, CODE.INVALID_INPUT, 'empty nested objects cannot be represented in a query string', objectLabel);
+      return false;
+    }
+    stack.push({ object, pathParts: objectPath, keys, index: 0 });
+    return true;
+  };
+  if (!enterObject(value, pathParts)) return;
+  while (stack.length > 0 && !stopped) {
+    const frame = stack[stack.length - 1];
+    if (frame.index >= frame.keys.length) {
+      stack.pop();
+      continue;
+    }
+    const key = frame.keys[frame.index];
+    frame.index += 1;
+    const childPath = frame.pathParts.concat([key]);
+    const property = readDataProperty(frame.object, key);
+    if (!property.ok) {
+      errorFinding(state, CODE.INVALID_INPUT, 'record input must use plain data properties without accessors', key);
+      continue;
+    }
+    const child = property.value;
     if (Array.isArray(child)) {
+      if (seenObjects.has(child)) {
+        errorFinding(state, CODE.INVALID_INPUT, 'record input must be a tree without shared or cyclic array references', key);
+        continue;
+      }
+      seenObjects.add(child);
+      if (child.length === 0) {
+        errorFinding(state, CODE.INVALID_INPUT, 'empty arrays cannot be represented in a query string', key);
+        continue;
+      }
       if (child.length > state.policy.maxArrayLength) {
         errorFinding(state, CODE.SPARSE_ARRAY, 'array input exceeds the configured maximum length', key);
       }
-      for (let index = 0; index < child.length; index += 1) {
+      const scanLength = Math.min(child.length, state.policy.maxArrayLength + 1);
+      for (let index = 0; index < scanLength; index += 1) {
+        if (entries.length > state.policy.maxParams) {
+          stopped = true;
+          break;
+        }
         if (!Object.prototype.hasOwnProperty.call(child, index)) {
           errorFinding(state, CODE.SPARSE_ARRAY, 'sparse array input is not allowed', key);
           continue;
@@ -1239,7 +1413,7 @@ function collectObjectEntries(value, pathParts, state, entries, activeObjects) {
       continue;
     }
     if (isPlainRecord(child)) {
-      collectObjectEntries(child, childPath, state, entries, activeObjects);
+      enterObject(child, childPath);
       continue;
     }
     const scalar = scalarToString(child);
@@ -1254,13 +1428,13 @@ function collectObjectEntries(value, pathParts, state, entries, activeObjects) {
       direct: true,
       objectPath: childPath
     });
+    if (entries.length > state.policy.maxParams) stopped = true;
   }
-  activeObjects.delete(value);
 }
 
 function consumeRecordInput(input, state) {
   const entries = [];
-  collectObjectEntries(input, [], state, entries, new Set());
+  collectObjectEntries(input, [], state, entries);
   state.params = entries.length;
   if (entries.length > state.policy.maxParams) {
     errorFinding(state, CODE.TOO_MANY_PARAMS, 'query parameter count exceeds the configured maximum');
@@ -1268,9 +1442,24 @@ function consumeRecordInput(input, state) {
     state.params = state.policy.maxParams + 1;
   }
   let bytes = 0;
-  for (const entry of entries) bytes += utf8ByteLength(entry.rawKey) + utf8ByteLength(entry.rawValue) + 1;
-  state.bytes = bytes;
-  if (bytes > state.policy.maxBytes) {
+  let oversized = false;
+  for (const entry of entries) {
+    const remaining = state.policy.maxBytes + 1 - bytes;
+    bytes += utf8ByteLengthAtMost(entry.rawKey, Math.max(0, remaining));
+    if (bytes > state.policy.maxBytes) oversized = true;
+    if (!oversized) {
+      bytes += 1;
+      if (bytes > state.policy.maxBytes) oversized = true;
+    }
+    if (!oversized) {
+      const valueRemaining = state.policy.maxBytes + 1 - bytes;
+      bytes += utf8ByteLengthAtMost(entry.rawValue, Math.max(0, valueRemaining));
+      if (bytes > state.policy.maxBytes) oversized = true;
+    }
+    if (oversized) break;
+  }
+  state.bytes = oversized ? state.policy.maxBytes + 1 : bytes;
+  if (oversized) {
     errorFinding(state, CODE.QUERY_TOO_LARGE, 'query byte length exceeds the configured maximum');
   }
   return entries;
@@ -1371,9 +1560,14 @@ function prepareDuplicates(entries, state) {
       warningFinding(state, CODE.DUPLICATE_PARAMETER, 'duplicate parameter resolved to the last value', first.key, first.ordinal);
       selected.push(group[group.length - 1]);
     } else if (state.policy.duplicatePolicy === 'allowlist' && state.policy.duplicateAllowlist.includes(first.rootKey)) {
-      warningFinding(state, CODE.DUPLICATE_PARAMETER, 'allowlisted duplicate parameter collected as an array', first.key, first.ordinal);
-      first.values = group.map((entry) => entry.value);
-      selected.push(first);
+      if (!state.policy.allowArrays) {
+        errorFinding(state, CODE.ARRAY_NOT_ALLOWED, 'duplicate collection would create an array while arrays are disabled', first.key, first.ordinal);
+        selected.push(first);
+      } else {
+        warningFinding(state, CODE.DUPLICATE_PARAMETER, 'allowlisted duplicate parameter collected as an array', first.key, first.ordinal);
+        first.values = group.map((entry) => entry.value);
+        selected.push(first);
+      }
     } else {
       errorFinding(state, CODE.DUPLICATE_PARAMETER, 'duplicate parameter key creates HTTP parameter pollution risk', first.key, first.ordinal);
       selected.push(first);
@@ -1572,6 +1766,7 @@ function isSafeQuery(input, policyInput) {
   }
 }
 const __exports = Object.create(null);
+__exports["INTERNAL_PARAM"] = INTERNAL_PARAM;
 __exports["analyzeQuery"] = analyzeQuery;
 __exports["parseQuery"] = parseQuery;
 __exports["auditQuery"] = auditQuery;
@@ -1583,7 +1778,70 @@ return __exports;
 /* src/serializer.mjs */
 
 const __querycageModule6 = (() => {
-const { compareStrings, encodeRFC3986 } = __querycageModule1;
+const { QueryCageError, CODE } = __querycageModule0;
+const { compareStrings, encodeRFC3986, firstForbiddenControl, hasInvalidUnicode, isPlainRecord } = __querycageModule1;
+const MAX_SERIALIZE_DEPTH = 65;
+const MAX_SERIALIZE_ARRAY_LENGTH = 100001;
+
+function invalidTree(message) {
+  throw new QueryCageError(CODE.INVALID_INPUT, message);
+}
+
+function validateText(value, kind) {
+  if (hasInvalidUnicode(value)) invalidTree(kind + ' contains invalid Unicode surrogate data');
+  if (firstForbiddenControl(value) !== null) invalidTree(kind + ' contains a control or format character');
+}
+
+function validateKey(key) {
+  if (key.length === 0) invalidTree('query tree keys must not be empty');
+  if (key.indexOf('[') !== -1 || key.indexOf(']') !== -1) {
+    invalidTree('query tree keys containing brackets cannot be canonicalized unambiguously');
+  }
+  validateText(key, 'query tree key');
+}
+
+function dataProperty(object, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (descriptor === undefined || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+    invalidTree('query tree objects must use data properties without accessors');
+  }
+  return descriptor.value;
+}
+
+function validateNode(value, depth, seen) {
+  if (depth > MAX_SERIALIZE_DEPTH) invalidTree('query tree exceeds the maximum canonical depth');
+  if (typeof value === 'string') {
+    validateText(value, 'query tree value');
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) invalidTree('query tree must not contain shared or cyclic references');
+    seen.add(value);
+    if (value.length === 0) invalidTree('empty arrays cannot be represented in a query string');
+    if (value.length > MAX_SERIALIZE_ARRAY_LENGTH) invalidTree('query tree array exceeds the maximum canonical length');
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) invalidTree('sparse arrays cannot be canonicalized');
+      if (typeof value[index] !== 'string') invalidTree('query tree arrays must contain only strings');
+      validateText(value[index], 'query tree array value');
+    }
+    return;
+  }
+  if (!isPlainRecord(value)) invalidTree('query tree values must be strings, string arrays, or plain objects');
+  if (seen.has(value)) invalidTree('query tree must not contain shared or cyclic references');
+  seen.add(value);
+  const keys = Object.keys(value);
+  if (depth > 0 && keys.length === 0) invalidTree('empty nested objects cannot be represented in a query string');
+  for (const key of keys) {
+    validateKey(key);
+    validateNode(dataProperty(value, key), depth + 1, seen);
+  }
+}
+
+function validateQueryTree(tree) {
+  if (!isPlainRecord(tree)) invalidTree('query tree must be a plain object');
+  validateNode(tree, 0, new Set());
+}
+
 function serializeScalarPair(prefix, value, pairs) {
   pairs.push(prefix + '=' + encodeRFC3986(value));
 }
@@ -1595,21 +1853,19 @@ function serializeNode(prefix, value, pairs) {
   }
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
-      if (typeof value[index] === 'string') serializeScalarPair(prefix + '[]', value[index], pairs);
+      serializeScalarPair(prefix + '[]', value[index], pairs);
     }
     return;
   }
-  if (value !== null && typeof value === 'object') {
-    const keys = Object.keys(value).sort(compareStrings);
-    for (const key of keys) {
-      serializeNode(prefix + '[' + encodeRFC3986(key) + ']', value[key], pairs);
-    }
+  const keys = Object.keys(value).sort(compareStrings);
+  for (const key of keys) {
+    serializeNode(prefix + '[' + encodeRFC3986(key) + ']', value[key], pairs);
   }
 }
 
 function serializeQueryTree(tree) {
+  validateQueryTree(tree);
   const pairs = [];
-  if (tree === null || typeof tree !== 'object') return '';
   const keys = Object.keys(tree).sort(compareStrings);
   for (const key of keys) {
     serializeNode(encodeRFC3986(key), tree[key], pairs);
@@ -1755,7 +2011,7 @@ return __exports;
 
 const __querycageModule8 = (() => {
 const { resolvePolicy } = __querycageModule2;
-const { analyzeQuery } = __querycageModule5;
+const { INTERNAL_PARAM, analyzeQuery } = __querycageModule5;
 const { serializeQueryTree, cloneQueryTree } = __querycageModule6;
 const { compareStrings, deepFreezeCopy, neutralizeTerminal, nullObject } = __querycageModule1;
 function rootForParam(param, policy) {
@@ -1771,11 +2027,16 @@ function rootForParam(param, policy) {
   return param.slice(0, end);
 }
 
+function internalFindingParam(finding) {
+  return typeof finding[INTERNAL_PARAM] === 'string' ? finding[INTERNAL_PARAM] : finding.param;
+}
+
 function removeImplicatedRoots(tree, findings, policy) {
   let removed = false;
   for (const finding of findings) {
-    if (finding.severity !== 'error' || typeof finding.param !== 'string') continue;
-    const root = rootForParam(finding.param, policy);
+    const param = internalFindingParam(finding);
+    if (finding.severity !== 'error' || typeof param !== 'string') continue;
+    const root = rootForParam(param, policy);
     if (root.length > 0 && Object.prototype.hasOwnProperty.call(tree, root)) {
       delete tree[root];
       removed = true;
@@ -1788,8 +2049,9 @@ function collectImplicatedParams(analysis, policy) {
   const names = new Set();
   for (const key of Object.keys(analysis.tree)) names.add(key);
   for (const finding of analysis.findings) {
-    if (typeof finding.param !== 'string') continue;
-    const root = rootForParam(finding.param, policy);
+    const param = internalFindingParam(finding);
+    if (typeof param !== 'string') continue;
+    const root = rootForParam(param, policy);
     if (root.length > 0) names.add(root);
   }
   return names;

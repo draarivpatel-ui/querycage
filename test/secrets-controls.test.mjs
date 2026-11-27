@@ -196,7 +196,7 @@ test('double encoded operator key is rejected', () => {
 test('double encoding can be allowed only by explicit policy', () => {
   const policy = createPolicy('strict', { rejectDoubleEncoding: false });
   const parsed = parseQuery('a=%2561', policy);
-  assert.equal(parsed.a, 'a');
+  assert.equal(parsed.a, '%61');
 });
 
 test('triple encoded input remains bounded and blocked', () => {
