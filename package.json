@@ -1,0 +1,78 @@
+{
+  "name": "querycage",
+  "version": "1.0.0",
+  "description": "Zero-dependency URL query-string, HPP, prototype pollution, NoSQL operator, and REST API filter security firewall",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/draarivpatel-ui/querycage.git"
+  },
+  "homepage": "https://github.com/draarivpatel-ui/querycage#readme",
+  "bugs": {
+    "url": "https://github.com/draarivpatel-ui/querycage/issues"
+  },
+  "type": "module",
+  "main": "./cjs/index.cjs",
+  "module": "./src/index.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.mjs",
+      "require": "./cjs/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "querycage": "bin/querycage.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cjs",
+    "types",
+    "examples",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:cjs": "node scripts/build-cjs.mjs",
+    "check:cjs": "node scripts/build-cjs.mjs --check",
+    "check:types": "node scripts/check-types.mjs",
+    "smoke": "node scripts/cli-smoke.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "prepack": "node scripts/build-cjs.mjs --check"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "security",
+    "query-string",
+    "querystring",
+    "hpp",
+    "http-parameter-pollution",
+    "prototype-pollution",
+    "nosql-injection",
+    "mongodb-security",
+    "pagination",
+    "sorting",
+    "mass-assignment",
+    "api-security",
+    "express",
+    "fastify",
+    "nextjs",
+    "hono",
+    "firewall",
+    "zero-dependency",
+    "nodejs"
+  ],
+  "author": "draarivpatel-ui",
+  "license": "MIT",
+  "sideEffects": false,
+  "dependencies": {},
+  "devDependencies": {}
+}
