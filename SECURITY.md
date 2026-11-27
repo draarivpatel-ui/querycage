@@ -1,29 +1,39 @@
 # Security policy
 
-## Scope
+## Reporting a vulnerability
 
-`querycage` is a defensive parser and auditor for URL query strings and REST API query parameters. It is designed to reduce exposure to HTTP Parameter Pollution, prototype pollution, NoSQL operator smuggling, sparse-array memory pressure, mass assignment, pagination abuse, sort injection, field projection abuse, secret leakage in URLs, terminal control injection, and parser differential attacks.
+Use the private GitHub Security Advisory form at [Report a vulnerability](https://github.com/draarivpatel-ui/querycage/security/advisories/new). Do not open a public issue, pull request or discussion with exploit details.
 
-The library does not replace parameterized queries, authorization checks, schema validation, or output encoding. Applications must still enforce their own data model and access control rules.
-
-## Reporting
-
-Do not open a public issue for a vulnerability that can plausibly be exploited. Report it privately through the repository owner's GitHub security contact path when available. Include a minimal query input, the policy used, the expected result, the actual result, and whether the issue requires a specific downstream parser or database driver.
-
-## Hardening commitments
-
-- No runtime dependencies.
-- Deterministic linear parsing with bounded iterative record traversal.
-- Null-prototype object output.
-- Raw query text decoded exactly once, with repeated encoding inspected but never flattened.
-- Deeply frozen policies and reports.
-- No attacker-controlled values in findings or errors.
-- Secret values redacted from CLI output.
-- Fail-closed policy validation.
-- Generated CommonJS checked for byte parity in CI.
-- Canonical serialization validates representable trees and rejects cycles, accessors, empty containers, control text, and ambiguous keys.
-- TypeScript declaration checks on Linux and Windows.
+Never include a live secret, token, cookie, private key, victim hostname or proprietary payload in a report. Use synthetic values and redacted transcripts.
 
 ## Supported versions
 
-Security fixes are applied to the latest published minor version.
+| Version | Status |
+| --- | --- |
+| 1.x | Supported |
+
+Security fixes are applied to the latest release line.
+
+## Scope
+
+This policy covers query string parsing, auditing, sanitizing, canonical serialization and REST API query controls.
+
+In scope:
+
+- A prototype pollution, NoSQL operator, HTTP parameter pollution or parser differential bypass.
+- A sparse array, nesting, size or decoding bound bypass that causes excessive work or memory use.
+- A sanitizer or serializer result that remains unsafe after its own success report.
+- A finding, error or CLI output path that echoes secret parameter values.
+
+Out of scope:
+
+- SQL or NoSQL injection caused by an application that bypasses parameterized queries after validation.
+- Authorization or schema failures outside the query parsing boundary.
+- Attacks that require modifying Node.js or the runtime platform.
+
+## Coordinated disclosure
+
+- Acknowledgment: within 48 hours.
+- Initial assessment: within 7 calendar days.
+- Fix or mitigation plan: within 30 calendar days for confirmed high-impact reports.
+- Coordinated public disclosure: up to 90 days by default, adjusted by mutual agreement when exploitation or user risk requires a different date.

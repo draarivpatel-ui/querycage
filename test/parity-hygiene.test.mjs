@@ -151,10 +151,10 @@ test('repository uses LF line endings in text files', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('package has zero dependencies and zero devDependencies', () => {
+test('package keeps runtime dependencies empty and fast-check development-only', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.dependencies, {});
-  assert.deepEqual(pkg.devDependencies, {});
+  assert.deepEqual(pkg.devDependencies, { 'fast-check': '4.10.3' });
 });
 
 test('package is unscoped and named querycage', () => {

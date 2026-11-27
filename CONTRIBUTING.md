@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Use Node.js 18 or newer. The package intentionally has no runtime dependencies and no development dependencies in `package.json`.
+Use Node.js 18 or newer. The package intentionally has no runtime dependencies. `fast-check` is the only development dependency and is used only for property-based fuzz tests.
 
 ## Verification
 
